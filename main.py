@@ -1,16 +1,28 @@
 # 导入所需的模块
-import requests, json, time
-import IPy
-import config
+import requests  # 用于发送 HTTP 请求
+import json  # 用于处理 JSON 数据
+import time  # 用于时间相关的操作
+import IPy  # 用于处理 IP 地址和 CIDR 范围
+import config  # 自定义配置模块，包含 API Token 和其他配置信息
+
 
 # 设置请求头，包含认证信息和内容类型
 headers = {
     "Authorization": "Bearer " + config.linode_token,  # 使用配置文件中的 Linode API Token
-    "Content-Type": "application/json"
+    "Content-Type": "application/json"  # 设置请求内容类型为 JSON
 }
 
-# 获取指定区域的实例私有 IP 地址
-def GetInstances(region: str):
+
+def get_instances(region: str):
+    """
+    获取指定区域的实例私有 IP 地址
+
+    参数:
+        region (str): 目标区域名称（如 'ap-south'）
+
+    返回:
+        list: 区域内实例的私有 IP 地址列表，格式为 'IP/32'
+    """
     url = config.instances_url  # 实例信息的 API URL
     linode_cidr = config.linode_cidr  # 指定的 CIDR 范围
 
@@ -19,14 +31,15 @@ def GetInstances(region: str):
 
     # 循环分页获取实例信息
     while True:
-        param = {
+        params = {
             'page': page,  # 当前页码
             'page_size': config.pagesize  # 每页的实例数量
         }
-
-        # 发送 GET 请求获取实例信息
-        resp = requests.get(url, headers=headers, params=param)
+        resp = requests.get(url, headers=headers, params=params)  # 发送 GET 请求
         data = json.loads(resp.text)  # 解析响应数据为 JSON 格式
+
+        page = data['page']  # 获取当前页码
+        pages = data['pages']  # 获取总页数
 
         # 遍历当前页的实例数据
         for item in data['data']:
@@ -36,23 +49,28 @@ def GetInstances(region: str):
                         cidr_ip = ip + "/32"  # 将 IP 地址转换为 /32 格式
                         private_ips.append(cidr_ip)  # 添加到私有 IP 列表
 
-        # 检查是否已获取所有页的数据
-        if page == data['pages']:
+        if page == pages:  # 如果已获取所有页的数据，退出循环
             break
-        page += 1  # 如果未完成，继续下一页
+        page += 1  # 继续下一页
 
     return private_ips  # 返回私有 IP 地址列表
 
 
-# 根据防火墙标签获取防火墙 ID
-def GetFirewalls(label: str):
-    url = config.firewalls_url  # 防火墙信息的 API URL
+def get_firewall_id(label: str):
+    """
+    根据防火墙标签获取防火墙 ID
 
-    # 发送 GET 请求获取防火墙列表
-    resp = requests.get(url, headers=headers)
+    参数:
+        label (str): 防火墙的标签名称
+
+    返回:
+        int or None: 防火墙的 ID，如果未找到则返回 None
+    """
+    url = config.firewalls_url  # 防火墙信息的 API URL
+    resp = requests.get(url, headers=headers)  # 发送 GET 请求
     data = json.loads(resp.text)  # 解析响应数据为 JSON 格式
 
-    firewall_id = 0  # 初始化防火墙 ID 为 0（表示未找到）
+    firewall_id = None  # 初始化防火墙 ID 为 None
     # 遍历防火墙列表，查找匹配的标签
     for item in data['data']:
         if item['label'] == label:
@@ -62,36 +80,50 @@ def GetFirewalls(label: str):
     return firewall_id  # 返回防火墙 ID
 
 
-# 获取指定防火墙的规则
-def GetFirewallRules(id):
-    url = config.fw_rules_url  # 防火墙规则的 API URL
-    url = url.replace('{firewallId}', str(id))  # 替换 URL 中的防火墙 ID 占位符
+def get_firewall_rules(firewall_id):
+    """
+    获取指定防火墙的规则
 
-    # 发送 GET 请求获取防火墙规则
-    resp = requests.get(url, headers=headers)
-    data = json.loads(resp.text)  # 解析响应数据为 JSON 格式
+    参数:
+        firewall_id (int): 防火墙的 ID
 
-    return data  # 返回防火墙规则
-
-
-# 更新指定防火墙的规则
-def UpdateFirewallRules(id, rules):
-    url = config.fw_rules_url  # 防火墙规则的 API URL
-    url = url.replace('{firewallId}', str(id))  # 替换 URL 中的防火墙 ID 占位符
-
-    # 发送 PUT 请求更新防火墙规则
-    resp = requests.put(url, headers=headers, data=json.dumps(rules))
-    data = json.loads(resp.text)  # 解析响应数据为 JSON 格式
-
-    return data  # 返回更新后的防火墙规则
+    返回:
+        dict: 防火墙的规则数据
+    """
+    url = config.fw_rules_url.replace('{firewallId}', str(firewall_id))  # 替换 URL 中的防火墙 ID 占位符
+    resp = requests.get(url, headers=headers)  # 发送 GET 请求
+    return json.loads(resp.text)  # 解析响应数据为 JSON 格式并返回
 
 
-# 更新防火墙规则以允许指定的 IP 列表
-def UpdateFirewall(id: str, ip_list):
+def update_firewall_rules(firewall_id, rules):
+    """
+    更新指定防火墙的规则
+
+    参数:
+        firewall_id (int): 防火墙的 ID
+        rules (dict): 新的规则数据
+
+    返回:
+        dict: 更新后的防火墙规则数据
+    """
+    url = config.fw_rules_url.replace('{firewallId}', str(firewall_id))  # 替换 URL 中的防火墙 ID 占位符
+    resp = requests.put(url, headers=headers, data=json.dumps(rules))  # 发送 PUT 请求更新规则
+    return json.loads(resp.text)  # 解析响应数据为 JSON 格式并返回
+
+
+def update_firewall(firewall_id, ip_list):
+    """
+    更新防火墙规则以允许指定的 IP 列表
+
+    参数:
+        firewall_id (int): 防火墙的 ID
+        ip_list (list): 允许的 IP 地址列表
+
+    返回:
+        dict: 更新后的防火墙规则数据
+    """
+    rules = get_firewall_rules(firewall_id)  # 获取当前防火墙的规则
     inbound_policy = []  # 初始化入站规则列表
-
-    # 获取当前防火墙的规则
-    rules = GetFirewallRules(id)
 
     # 遍历当前规则，保留非自动生成的规则
     for rule in rules['inbound']:
@@ -107,7 +139,7 @@ def UpdateFirewall(id: str, ip_list):
         },
         "action": "ACCEPT",
         "label": "accept-region-inbound-policy",
-        "description": "Auto generated local region inbound rules."
+        "description": "Auto-generated local region inbound rules."
     }
     udp_rule = {
         "protocol": "UDP",
@@ -117,78 +149,39 @@ def UpdateFirewall(id: str, ip_list):
         },
         "action": "ACCEPT",
         "label": "accept-region-inbound-policy",
-        "description": "Auto generated local region inbound rules."
+        "description": "Auto-generated local region inbound rules."
     }
 
     inbound_policy.append(tcp_rule)  # 添加 TCP 规则
     inbound_policy.append(udp_rule)  # 添加 UDP 规则
 
-    # 更新规则
-    rules['inbound'] = inbound_policy
-
-    # 调用 UpdateFirewallRules 函数更新防火墙规则
-    return UpdateFirewallRules(id, rules)
+    rules['inbound'] = inbound_policy  # 更新入站规则
+    return update_firewall_rules(firewall_id, rules)  # 调用更新规则函数
 
 
-# 创建新的防火墙
-def CreateFirewall(name: str, ip_list):
-    # 定义允许 TCP 和 UDP 的所有端口的规则
-    rules = [
-        {
-            "protocol": "TCP",
-            "ports": "1-65535",
-            "addresses": {
-                "ipv4": ip_list
-            },
-            "action": "ACCEPT",
-            "label": "accept-region-inbound-policy",
-            "description": "Auto generated local region inbound rules."
-        },
-        {
-            "protocol": "UDP",
-            "ports": "1-65535",
-            "addresses": {
-                "ipv4": ip_list
-            },
-            "action": "ACCEPT",
-            "label": "accept-region-inbound-policy",
-            "description": "Auto generated local region inbound rules."
-        }
-    ]
+def main():
+    """
+    主程序逻辑
+    """
+    region = config.region  # 从配置文件中获取目标区域
+    firewall_name = f"{region}_firewall_policy"  # 构造防火墙名称
 
-    # 从配置文件中获取防火墙模板
-    firewall = config.linode_firewall
-    firewall['rules']['inbound'] = rules  # 设置入站规则
-    firewall['label'] = name  # 设置防火墙名称
+    # 获取实例的私有 IP 地址
+    ip_list = get_instances(region)
+    print(f"Region: {region}, IPs: {ip_list}")
 
-    # 发送 POST 请求创建防火墙
-    resp = requests.post(url=config.firewalls_url, headers=headers, data=json.dumps(firewall))
-    data = json.loads(resp.text)  # 解析响应数据为 JSON 格式
+    # 获取防火墙 ID
+    firewall_id = get_firewall_id(firewall_name)
 
-    return data  # 返回创建的防火墙信息
+    if firewall_id:
+        print(f"Firewall '{firewall_name}' already exists. Updating rules...")
+        result = update_firewall(firewall_id, ip_list)  # 更新防火墙规则
+        print(f"Update result: {result}")
+    else:
+        print(f"Firewall '{firewall_name}' not found. No action taken.")
+
+    print("Task completed. Exiting...")  # 打印任务完成信息
 
 
-# 主程序入口
 if __name__ == '__main__':
-    interval = config.interval  # 从配置文件中获取定时任务的间隔时间
-
-    # 无限循环，定时执行任务
-    while True:
-        region = config.region  # 从配置文件中获取目标区域
-        ip_list = GetInstances(region)  # 获取指定区域的实例私有 IP 列表
-        print(region, ip_list)  # 打印区域和 IP 列表
-
-        firewall_name = config.region + '_firewall_policy'  # 构造防火墙名称
-        firewall_id = GetFirewalls(firewall_name)  # 获取防火墙 ID
-
-        # 根据防火墙是否存在，执行创建或更新操作
-        if firewall_id == 0:
-            print('Create Firewall')  # 如果防火墙不存在，创建防火墙
-            result = CreateFirewall(firewall_name, ip_list)
-        else:
-            print('Update Firewall')  # 如果防火墙已存在，更新防火墙规则
-            result = UpdateFirewall(firewall_id, ip_list)
-
-        print(result)  # 打印操作结果
-
-        time.sleep(interval)  # 按配置的间隔时间暂停
+    main()  # 执行主程序
